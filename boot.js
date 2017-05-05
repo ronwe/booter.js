@@ -14,30 +14,41 @@
 
     var util = global.util = {
         uuid : uuid
-        ,build_query : function(obj){
-                if (_detectType(obj , 'String')) return obj
-                var ret = []
-                for (var name in obj){
-                    ret.push(encodeURIComponent(name) + '=' + encodeURIComponent(obj[name]))
-                }
-                return ret.join('&')
-            }
-        ,report : function(){
-            console && console.log &&  console.log.apply(console , arguments)
-            }
-        ,reportErr : function(){
-            console && console.error &&  console.error.apply(console , arguments)
-            }
-        ,nextTick : nextTick
-        ,toArray : function(colletions ,offset){
-                return Array.prototype.slice.call(colletions , offset || 0) 
-                }
-        ,isArray : function(obj){
-                return _detectType(obj , 'Array')
-                }
-        ,detectType : function(obj , M){
-                return _detectType(obj , M)
-                }
+		,build_query : function(obj){
+			if (_detectType(obj , 'String')) return obj
+			var ret = []
+			for (var name in obj){
+				ret.push(encodeURIComponent(name) + '=' + encodeURIComponent(obj[name]))
+			}
+			return ret.join('&')
+		}
+		,report : function(){
+			console && console.log &&  console.log.apply(console , arguments)
+		}
+		,reportErr : function(){
+			console && console.error &&  console.error.apply(console , arguments)
+		}
+		,nextTick : nextTick
+		,toArray : function(colletions ,offset){
+			return Array.prototype.slice.call(colletions , offset || 0) 
+		}
+		,isArray : function(obj){
+			return _detectType(obj , 'Array')
+		}
+		,detectType : function(obj , M){
+			return _detectType(obj , M)
+		}
+		,throttle : function throttle(fn ,delay){
+			var timer = null	
+			delay = delay || 10
+			return function(){
+				var context = this, args = arguments
+				clearTimeout(timer)
+				timer = setTimeout(function(){
+					fn.apply(context, args)
+				}, delay)
+			}
+		}
     }
 
     var head = document.head  || document.getElementsByTagName('head')[0] || document.documentElement
@@ -182,8 +193,6 @@
         ///return name.replace(/\//g,'::')
     }
     var DEFINESTAT = {'DEFINING' : 1 ,'ASYNCLOAD' : 2 ,'DEFINED':3}
-	var LOCALKEY = '_cjs_'
-		,LOCAL_MODS_KEY = '_js_list_'
 	var STORAGE = 'localStorage' in window ? window.localStorage : null
     function define(modOrign , depencies , con ,opt){
         var mod = trnName(modOrign )
@@ -335,10 +344,15 @@
 			if (bootOpt.localCache && bootOpt.modsNVersion){
 				//bootOpt.modVersions 里的都需要使用，先跟本地比对然后重写列表	
 				//长期不用的缓存理掉
-				//缓存格式 md5;缓存时间;依赖列表 逗号分割;脚本内容
+				//缓存格式 md5;依赖列表 逗号分割;脚本内容
 				~function(){
+					var LOCALKEY = '_cjs_'
+						,LOCAL_MODS_ACTIVE_KEY = '_cjs_a_'
+						,LOCAL_MODS_KEY = '_js_list_'
+
 					//缓存开始时间
 					var ERA = 1493740800000
+						,RECYCLE_TTL = 3000 //3秒后执行清理
 					function getStoredKey(k){
 						return LOCALKEY + getModKey(k)
 					}
@@ -348,11 +362,31 @@
 
 					var all_mods = getItem(LOCAL_MODS_KEY)
 						,should_update_list = false
-					if (all_mods) {
-						all_mods = all_mods.split(',')
-					}else{
-						all_mods = []
+
+					all_mods = all_mods? all_mods.split(',') : []
+
+					var mods_active = getItem(LOCAL_MODS_ACTIVE_KEY)
+						,should_update_stamp = false
+					mods_active = mods_active? mods_active.split(',') :[]
+				
+
+					function  StrGen(con,splitor){
+						var splitor_len = splitor.length
+						return {
+							'next' : function(){
+								var index = con.indexOf(splitor)
+								if (index > -1){
+									var ret = con.slice(0,index)
+									con = con.slice(index + splitor_len)
+									return ret
+								}
+							}
+							,'return': function(){
+								return con
+							}
+						}
 					}
+
 					function getModKey(m){
 						var index  = all_mods.indexOf(m)
 						if (index === -1) {
@@ -386,29 +420,22 @@
 						if (bootOpt.localCache.decompress) val = bootOpt.localCache.decompress(val)
 						return val
 					}
-					function tryUpModList(){
-						if (!should_update_list) return
-						setItem(LOCAL_MODS_KEY, all_mods.join(','))
-					}
 					function getCacheStamp(){
 						//过去的分钟数
 						return (new Date - ERA)/1000/60|0
 					}
-					function  StrGen(con,splitor){
-						var splitor_len = splitor.length
-						return {
-							'next' : function(){
-								var index = con.indexOf(splitor)
-								if (index > -1){
-									var ret = con.slice(0,index)
-									con = con.slice(index + splitor_len)
-									return ret
-								}
-							}
-							,'return': function(){
-								return con
-							}
-						}
+					var tryUpModList = util.throttle(function(){
+						if (!should_update_list) return
+						setItem(LOCAL_MODS_KEY, all_mods.join(','))
+					})
+					var tryUpActiveStamp = util.throttle(function(){
+						if (!should_update_stamp) return
+						setItem(LOCAL_MODS_ACTIVE_KEY, mods_active.join(','))
+					})
+					function updateModActiveTime(mode , ttl){
+						mods_active[getModKey(m)] = ttl
+						should_update_stamp = true
+						tryUpActiveStamp()
 					}
 
 					for(var  m in bootOpt.modsNVersion){
@@ -419,16 +446,16 @@
 						if (_cached){
 
 							var local_version = _cached.slice(0,32)
-							if (local_version == lastest_version){
+							if (local_version === lastest_version){
 								_cached = StrGen(_cached.slice(33) ,';')
 
-								var cache_time = _cached.next()
-									,depencies = _cached.next()
+								var depencies = _cached.next()
 									,fn = _cached.return() 
 
 								depencies = depencies ? unzip(depencies.split(',')) : []
 								try{
 									define(m , depencies ,new Function("return " + fn)() ,{'fromLocal' : true})
+									updateModActiveTime(m ,getCacheStamp())
 								}catch(err){
 									//依赖列表错误时这里会报错
 									console.log(err)
@@ -447,13 +474,33 @@
 						emitter.on(m + ':tocache',function(store_key ,lastest_version){
 							return function(fn , depencies){
 								if (!lastest_version || !store_key) return
-								var _cache = [lastest_version ,getCacheStamp(), zip(depencies).join(',') ,  fn.toString()].join(';')
+								var _cache = [lastest_version , zip(depencies).join(',') ,  fn.toString()].join(';')
 								setItem(store_key , _cache)
 							}
 						}(store_key,lastest_version))
 					}
-					//if (!new_mods.length) new_mods = null
+					
+					//删除长期未激活的缓存
+					//单位分钟
+					function removeUnActives(expires){
+						var now = getCacheStamp() 
+						mods_active.forEach(function(active_time,i){
+							active_time = active_time | 0
+							if (active_time + expires >= now) return
+							var mod = getKeyMod(i)
+								,store_key = getStoredKey(mod)
+							localStorage.removeItem(store_key)
+							updateModActiveTime(mod ,0)
+						})
+					}
+
+					if (bootOpt.localCache.expires && mods_active){
+						setTimeout(function(){
+							removeUnActives(bootOpt.localCache.expires)
+						},RECYCLE_TTL)
+					}		
 				}()
+				
 				
 			}
             function onLoad(){
