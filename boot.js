@@ -183,6 +183,7 @@
     }
     var DEFINESTAT = {'DEFINING' : 1 ,'ASYNCLOAD' : 2 ,'DEFINED':3}
 	var LOCALKEY = '_cjs_'
+		,LOCAL_MODS_KEY = '_js_list_'
 	var STORAGE = 'localStorage' in window ? window.localStorage : null
     function define(modOrign , depencies , con ,opt){
         var mod = trnName(modOrign )
@@ -326,32 +327,115 @@
     ~function(){
         var async_mod = []
             ,async_timer
+
+
+
         global.booter.asyncLoad = function(mod , cbk){
 			var new_mods
 			if (bootOpt.localCache && bootOpt.modsNVersion){
 				//bootOpt.modVersions 里的都需要使用，先跟本地比对然后重写列表	
+				//长期不用的缓存理掉
+				//缓存格式 md5;缓存时间;依赖列表 逗号分割;脚本内容
 				~function(){
+					//缓存开始时间
+					var ERA = 1493740800000
 					function getStoredKey(k){
-						return LOCALKEY + k
+						return LOCALKEY + getModKey(k)
 					}
 					
 					new_mods = []
+
+
+					var all_mods = getItem(LOCAL_MODS_KEY)
+						,should_update_list = false
+					if (all_mods) {
+						all_mods = all_mods.split(',')
+					}else{
+						all_mods = []
+					}
+					function getModKey(m){
+						var index  = all_mods.indexOf(m)
+						if (index === -1) {
+							should_update_list = true
+							index = all_mods.push(m) - 1
+							tryUpModList()
+						}
+						return index
+					}
+					function getKeyMod(index){
+						return all_mods[index] 
+					
+					}
+
+					function unzip(depencies){
+						return depencies.map(getKeyMod)
+					} 
+					function zip(depencies){
+						return depencies.map(getModKey)
+					}
+					function setItem(key,val){
+						try{
+							if (bootOpt.localCache.decompress) val = bootOpt.localCache.compress(val)
+							STORAGE.setItem(key , val)
+						}catch(err){
+							console.log('update js list error ' ,error)
+						}
+					}
+					function getItem(key){
+						var val = STORAGE.getItem(key)
+						if (bootOpt.localCache.decompress) val = bootOpt.localCache.decompress(val)
+						return val
+					}
+					function tryUpModList(){
+						if (!should_update_list) return
+						setItem(LOCAL_MODS_KEY, all_mods.join(','))
+					}
+					function getCacheStamp(){
+						//过去的分钟数
+						return (new Date - ERA)/1000/60|0
+					}
+					function  StrGen(con,splitor){
+						var splitor_len = splitor.length
+						return {
+							'next' : function(){
+								var index = con.indexOf(splitor)
+								if (index > -1){
+									var ret = con.slice(0,index)
+									con = con.slice(index + splitor_len)
+									return ret
+								}
+							}
+							,'return': function(){
+								return con
+							}
+						}
+					}
 
 					for(var  m in bootOpt.modsNVersion){
 						var lastest_version = bootOpt.modsNVersion[m]
 						//模块不存在时 lastest_version 为空 不缓存
 						var store_key = getStoredKey(m)
-						var _cached = STORAGE.getItem(store_key)
+						var _cached = getItem(store_key)
 						if (_cached){
 
 							var local_version = _cached.slice(0,32)
 							if (local_version == lastest_version){
-								_cached = _cached.slice(33)
-								var splitor = _cached.indexOf(';')
-								var depencies = _cached.slice(0, splitor)
-									,fn = _cached.slice(splitor+1)
-								depencies = depencies ? depencies.split(',') : []
-								define(m , depencies ,new Function("return " + fn)() ,{'fromLocal' : true})
+								_cached = StrGen(_cached.slice(33) ,';')
+
+								var cache_time = _cached.next()
+									,depencies = _cached.next()
+									,fn = _cached.return() 
+
+								depencies = depencies ? unzip(depencies.split(',')) : []
+								try{
+									define(m , depencies ,new Function("return " + fn)() ,{'fromLocal' : true})
+								}catch(err){
+									//依赖列表错误时这里会报错
+									console.log(err)
+									//删除缓存并异步拉取
+									localStorage.removeItem(store_key)
+									booter.asyncLoad(m)
+								}
 
 								continue
 							}
@@ -363,11 +447,8 @@
 						emitter.on(m + ':tocache',function(store_key ,lastest_version){
 							return function(fn , depencies){
 								if (!lastest_version || !store_key) return
-								try{
-									STORAGE.setItem(store_key , lastest_version + ';' + depencies.join(',') + ';' +  fn.toString())
-								}catch(err){
-									console.log('存储满了' ,err)
-								}
+								var _cache = [lastest_version ,getCacheStamp(), zip(depencies).join(',') ,  fn.toString()].join(';')
+								setItem(store_key , _cache)
 							}
 						}(store_key,lastest_version))
 					}
