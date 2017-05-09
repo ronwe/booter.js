@@ -320,6 +320,7 @@
             return this    
         }
     }
+	if (!global.define) global.define = global.booter.define
     
     function appendFix(obj , stuffix){
         var util = global.util
