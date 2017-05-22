@@ -1,6 +1,6 @@
 ;(function(global ,undefined){
     var index = 0
-    global.nextTick = function(fn , ttl){
+    global.nextTick = global.requestAnimationFrame || function(fn , ttl){
         global.setTimeout(fn , ttl || 0)
     }
     global.uuid = function(pre , len){
@@ -279,21 +279,38 @@
         return  (modNS in requireRef) || (modNS in mods)
     }
 
-    function loadMod(mods){
+    function loadMod(mods , opt){
+		opt = opt || {}
         if (! global.util.isArray(mods)) mods = [mods]
+		//加版本号，前缀设置
+		//TODO serverHost 失效时的fallback
+		var version = bootOpt.Version 
+		if ('auto' === version ) version = +new Date
+		version = version ? '?v=' + version : ''
+
+		hostNu = opt.hostNu || 0
+		var serverHost = bootOpt.serverHost
+
+		if (util.isArray(serverHost)) serverHost = serverHost[hostNu] 
+		if (!serverHost) {
+			throw '资源未配置'
+			return
+		}
+
+		function onErr(){
+			hostNu++
+			if (!util.isArray(bootOpt.serverHost) || hostNu >= bootOpt.serverHost.length ) return console.error('资源拉取错误')
+			loadMod(mods,{'hostNu' : hostNu})
+		}
         if (bootOpt.ENV === 'DEV'){
             mods.forEach(function(m){
-				if (!m) return
-                loadJS(bootOpt.serverHost + m + '.js') 
+				if (!m || isModLoaded(m)) return
+                loadJS(serverHost + m + '.js' + version ,{'onErr' : onErr}) 
             })
 		} else {
 			var mods_combine = mods.join('+')
 			if (!mods_combine) return
-			if (bootOpt.localCache) {
-				loadJS(bootOpt.serverHost + '!' + mods_combine + '.js') 
-			}else{
-				loadJS(bootOpt.serverHost + mods_combine + '.js') 
-			}
+			loadJS(serverHost + mods_combine + '.js' + version,{'onErr' : onErr}) 
 		}
     }
 
@@ -349,7 +366,7 @@
 				~function(){
 					var LOCALKEY = '_cjs_'
 						,LOCAL_MODS_ACTIVE_KEY = '_cjs_a_'
-						,LOCAL_MODS_KEY = '_js_list_'
+						,LOCAL_MODS_KEY = '_cjs_lt_'
 
 					//缓存开始时间
 					var ERA = 1493740800000

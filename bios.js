@@ -422,57 +422,9 @@
 		return LZString;
 	})();
 
-	//类库加载
-	//检查本地是否缓存了booter.js
-	if (window.booter) return
-	var LIB_KEY = '_cjs_l_'
-		,LIB_URL = '/jslib/boot.min,/jslib/zepto.min.js'
-		,LIB_VERSION = '1;'
 	var STORAGE = 'localStorage' in window ? window.localStorage : null
-	//从网络加载
-
-	function  initOpt(){
-		window.booter.option({
-			"localCache" :{'compress': LZString.compressToUTF16,'decompress' : LZString.decompressFromUTF16,'expires' : 60 }
-		})
-
-	}
-	function loadFromNet(){
-		//暂存器
-		var _can = []
-		window.booter = {
-			option :function(){ _can.push({'fn':'option','args':arguments }) }
-			,asyncLoad :function(){_can.push({'fn':'asyncLoad','args':arguments })}
-		}
-		pullLib(LIB_URL ,function(lib_context){
-			execute_code(lib_context)
-			var booter = window.booter
-			initOpt()
-			for (var i=0,j=_can.length;i<j;i++){
-				var _cmd = _can[i]
-				booter[_cmd.fn].apply(null , _cmd.args)
-			}
-			_can = null
-			try{
-				STORAGE && STORAGE.setItem(LIB_KEY, LZString.compressToUTF16(LIB_VERSION + lib_context))
-			}catch(err){
-				//可能存满了 清空
-				cleanCache()
-			}
-		})
-	}
-	function cleanCache(){
-		if (!STORAGE) return
-		for (var k in STORAGE){
-			if (k.indexOf('_cjs_') === 0) {
-				STORAGE.removeItem(k)
-			}
-		}
-	}
-	function execute_code(code){
-		new Function("" ,code)()
-	}
 	function pullLib(lib_src,cbk){
+		//jsonp的话可跨域
 		var xhr = new XMLHttpRequest()         
 		xhr.onreadystatechange = function() {
 			if(xhr.status == 200 && xhr.readyState == 4) {
@@ -484,16 +436,115 @@
 
 	}
 
-	if (!STORAGE) return loadFromNet()
-	var lib_context = STORAGE && STORAGE.getItem(LIB_KEY)
-	if (!lib_context) return loadFromNet()
-	lib_context = LZString.decompressFromUTF16(lib_context)
-	if (!lib_context) return loadFromNet()
+	function tryLoadLib(loadFromNet,LIB_KEY,LIB_VERSION){
+		if (!STORAGE) return loadFromNet()
+		var lib_context = STORAGE && STORAGE.getItem(LIB_KEY)
+		if (!lib_context) return loadFromNet()
+		lib_context = LZString.decompressFromUTF16(lib_context)
+		if (!lib_context) return loadFromNet()
 
-	if (lib_context.indexOf(LIB_VERSION) !== 0) return loadFromNet()
+		if (lib_context.indexOf(LIB_VERSION) !== 0) return loadFromNet()
 
-	lib_context = lib_context.slice(LIB_VERSION.length)
+		lib_context = lib_context.slice(LIB_VERSION.length)
+		if (!lib_context) return loadFromNet()
+		return lib_context
+	}
+	function saveLib(LIB_KEY, LIB_VERSION , lib_context){
+		if (!STORAGE) return false
+		try{
+			STORAGE.setItem(LIB_KEY, LZString.compressToUTF16(LIB_VERSION + lib_context))
+		}catch(err){
+			//可能存满了 清空
+			cleanCache()
+		}
+	
+	}
+	function cleanCache(){
+		if (!STORAGE) return
+		for (var k in STORAGE){
+			if (STORAGE.hasOwnProperty(k) && k.indexOf('_cjs_') === 0) {
+				STORAGE.removeItem(k)
+			}
+		}
+	}
+	var head = document.head || document.getElementsByTagName('head')[0]
+	//base css 加载
+	~function(){
+		var LIB_CSS_KEY = '_cjs_c_'
+			,LIB_CSS_URL = '/css/reset.css'
+			,LIB_CSS_VERSION = '1;'
+		function exe_styles(css){
+			var style = document.createElement('style')
 
-	execute_code(lib_context)
-	initOpt()
+			style.type = 'text/css'
+			if (style.styleSheet){
+				style.styleSheet.cssText = css
+			} else {
+				style.appendChild(document.createTextNode(css))
+			}
+
+			head.appendChild(style)
+		}
+		function loadFromNet(){
+			pullLib(LIB_CSS_URL ,function(lib_styles){
+				exe_styles(lib_styles)
+				saveLib(LIB_CSS_KEY, LIB_CSS_VERSION , lib_styles)
+			})
+		}
+	
+		var lib_context = tryLoadLib(loadFromNet,LIB_CSS_KEY ,LIB_CSS_VERSION)
+		if (!lib_context) return 
+		exe_styles(lib_context)
+	}()
+
+
+
+	//类库加载
+	//检查本地是否缓存了booter.js
+	~function(){
+		if (window.booter) return
+		var LIB_KEY = '_cjs_l_'
+			,LIB_URL = '/jslib/boot.min,/jslib/zepto.min.js'
+			,LIB_VERSION = '1;'
+		//从网络加载
+
+		function  initOpt(){
+			window.booter.option({
+				"localCache" :{'compress': LZString.compressToUTF16,'decompress' : LZString.decompressFromUTF16,'expires' : 60 }
+			})
+
+		}
+		function loadFromNet(){
+			//暂存器
+			var _can = []
+			window.booter = {
+				option :function(){ _can.push({'fn':'option','args':arguments }) }
+				,asyncLoad :function(){_can.push({'fn':'asyncLoad','args':arguments })}
+				,define :function(){_can.push({'fn':'define','args':arguments })}
+			}
+			var global_define = !!window.define
+			if (!global_define) window.define = window.booter.define
+			pullLib(LIB_URL ,function(lib_context){
+				execute_code(lib_context)
+				var booter = window.booter
+				if (!global_define) window.define = booter.define
+				initOpt()
+				for (var i=0,j=_can.length;i<j;i++){
+					var _cmd = _can[i]
+					booter[_cmd.fn].apply(null , _cmd.args)
+				}
+				_can = null
+				saveLib(LIB_KEY, LIB_VERSION , lib_context)
+			})
+		}
+		function execute_code(code){
+			new Function("" ,code)()
+		}
+
+		var lib_context = tryLoadLib(loadFromNet,LIB_KEY,LIB_VERSION)
+		if (!lib_context) return
+
+		execute_code(lib_context)
+		initOpt()
+	}()
 }()
