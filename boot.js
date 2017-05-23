@@ -308,9 +308,9 @@
                 loadJS(serverHost + m + '.js' + version ,{'onErr' : onErr}) 
             })
 		} else {
-			var mods_combine = mods.join('+')
+			var mods_combine = bootOpt.combine ?bootOpt.combine(mods) : mods.join('+') + '.js'
 			if (!mods_combine) return
-			loadJS(serverHost + mods_combine + '.js' + version,{'onErr' : onErr}) 
+			loadJS(serverHost + mods_combine +  version,{'onErr' : onErr}) 
 		}
     }
 

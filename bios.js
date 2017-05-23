@@ -511,6 +511,7 @@
 		function  initOpt(){
 			window.booter.option({
 				"localCache" :{'compress': LZString.compressToUTF16,'decompress' : LZString.decompressFromUTF16,'expires' : 60 }
+				,"combine" : function(mods){ return  mods.map(function(m){ return m + '.js'}).join(',')}
 			})
 
 		}
