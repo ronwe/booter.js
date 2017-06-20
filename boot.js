@@ -184,6 +184,7 @@
 
 ;(function(global ,undefined){
     var mods = {}
+		,asyncLoading = []
 		,depTree = {}
 		,markHardDefine = {}
         ,modDefining = {}
@@ -293,12 +294,14 @@
 
             //依赖失败的话会尝试异步拉取一次
             //已加载的模块不再拉了
+
+			//如果在async_load列表里的也不要拉了
             var _on_evt_list = []
             for (var i = toLoad.length-1 ;i >= 0 ;i --){
                 var _m = trnName(toLoad[i])
                 if (ns) _m += '@' + ns
                 _on_evt_list.push(_m + ':defined')
-                if (modDefining[_m]) toLoad.splice(i,1) 
+                if (modDefining[_m] || asyncLoading.indexOf(toLoad[i]) >=0) toLoad.splice(i,1) 
                 else modDefining[_m] = DEFINESTAT.ASYNCLOAD 
             }
 
@@ -308,7 +311,7 @@
             })
             if (toLoad.length) {
                 loadMod(toLoad)
-            }else{
+            }else if (bootOpt.enableHardDefine){
 				nextTick(hardDefine)
 			}
             return
@@ -339,6 +342,7 @@
 
     function loadMod(mods , opt){
 		opt = opt || {}
+		opt.onErr = onErr
         if (! global.util.isArray(mods)) mods = [mods]
 		//加版本号，前缀设置
 		//TODO serverHost 失效时的fallback
@@ -363,12 +367,12 @@
         if (bootOpt.ENV === 'DEV'){
             mods.forEach(function(m){
 				if (!m || isModLoaded(m)) return
-                loadJS(serverHost + m + '.js' + version ,{'onErr' : onErr}) 
+                loadJS(serverHost + m + '.js' + version ,opt) 
             })
 		} else {
 			var mods_combine = bootOpt.combine ?bootOpt.combine(mods) : mods.join('+') + '.js'
 			if (!mods_combine) return
-			loadJS(serverHost + mods_combine +  version,{'onErr' : onErr})
+			loadJS(serverHost + mods_combine +  version,opt)
 		}
     }
 
@@ -618,11 +622,15 @@
             })
 
             //开发模式js加载器加载 ， 生产模式服务器打包加载
+			asyncLoading = async_mod
 			if (!async_mod.length) return
             async_timer && global.clearTimeout(async_timer)
-            async_timer = global.setTimeout(function(){
-                            loadMod(async_mod)
-                        } , 0)
+			async_timer = global.setTimeout(function(){
+				loadMod(async_mod ,{'onLoad' : function(){
+					//加载完了 可以开启hardDefine
+					if (false !== bootOpt.enableHardDefine) bootOpt.enableHardDefine = true
+				}})
+			} , 0)
             return this
         }
     }()
