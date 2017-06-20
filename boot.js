@@ -628,7 +628,8 @@
 			async_timer = global.setTimeout(function(){
 				loadMod(async_mod ,{'onLoad' : function(){
 					//加载完了 可以开启hardDefine
-					if (false !== bootOpt.enableHardDefine) bootOpt.enableHardDefine = true
+					if (false === bootOpt.enableHardDefine) return
+					bootOpt.enableHardDefine = true
 				}})
 			} , 0)
             return this
