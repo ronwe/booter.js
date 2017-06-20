@@ -18,9 +18,24 @@
 			if (_detectType(obj , 'String')) return obj
 			var ret = []
 			for (var name in obj){
-				ret.push(encodeURIComponent(name) + '=' + encodeURIComponent(obj[name]))
+				obj[name] !== '' && ret.push(encodeURIComponent(name) + '=' + encodeURIComponent(obj[name]))
 			}
 			return ret.join('&')
+		}
+		,extend : function(){
+			var a,b
+			function _ext(m ,n){
+				for(var k in n){
+					m[k] = n[k]
+				}
+			}
+			util.toArray(arguments ).forEach(function(i){
+				b = i
+				if (!_detectType(i , 'Object')) return
+				if (!a) a = i
+				else _ext(a,i)
+			})
+			return a || b
 		}
 		,report : function(){
 			console && console.log &&  console.log.apply(console , arguments)
@@ -48,6 +63,22 @@
 					fn.apply(context, args)
 				}, delay)
 			}
+		}
+        ,debounce : function debounce(func, wait, immediate){
+			var timeout, result;
+            return function() {
+                var context = this,
+                    args = arguments;
+                var later = function() {
+                    timeout = null;
+                    if (!immediate) result = func.apply(context, args);
+                };
+                var callNow = immediate && !timeout;
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+                if (callNow) result = func.apply(context, args);
+                return result;
+            };
 		}
     }
 
@@ -153,6 +184,8 @@
 
 ;(function(global ,undefined){
     var mods = {}
+		,depTree = {}
+		,markHardDefine = {}
         ,modDefining = {}
         ,inteligent = {}
         ,requireRef = {}
@@ -169,9 +202,16 @@
         if (mod){
             mod = trnName(mod , callerMod)
         }
-        if (! isModLoaded(mod ,ns) ) throw mod + '@' + ns + ' lost'
-        if (ns) mod += '@' + ns
-        return mods[mod]
+		var modNS = mod
+        if (ns) modNS += '@' + ns
+        if (! isModLoaded(mod ,ns) ) {
+			if (!bootOpt.hardDefining){
+				throw mod + '@' + ns + ' lost'
+			}else{
+				mods[modNS] = {}
+			}
+		}
+        return mods[modNS]
     }
 
     function trnName(name , callerMod){
@@ -194,14 +234,33 @@
     }
     var DEFINESTAT = {'DEFINING' : 1 ,'ASYNCLOAD' : 2 ,'DEFINED':3}
 	var STORAGE = 'localStorage' in window ? window.localStorage : null
+	/*
+	* 忽略依赖 强制define
+	*/
+	function hardDefine(){
+		bootOpt.hardDefining = true
+		Object.keys(depTree).forEach(function(modOrign){
+			define(modOrign,[] , depTree[modOrign])
+		})
+		delete bootOpt.hardDefining
+		markHardDefine = {}
+		depTree = {} 
+	}
     function define(modOrign , depencies , con ,opt){
+		if (!con) return
         var mod = trnName(modOrign )
         var modNS = mod 
         var ns = define.ns
         if (ns) modNS += '@' + ns
 
-        if (modNS in mods) return
         if (modNS in requireRef) return
+		if (!bootOpt.hardDefining){
+			if (modNS in mods) return
+			depTree[modOrign] = con 
+		}else {
+			if(markHardDefine[modOrign]) return
+			markHardDefine[modOrign] = true
+		}
 
         modDefining[modNS] = DEFINESTAT.DEFINING 
 
@@ -244,28 +303,27 @@
             }
 
             emitter.on(_on_evt_list , function(){
+				if (bootOpt.hardDefining && depTree[modOrign]) return
                 define(modOrign , depencies , con)
             })
-
             if (toLoad.length) {
                 loadMod(toLoad)
-                /* 
-                if (ENV === 'DEV'){
-                    loadMod(toLoad)
-                } else {
-                    console.log('miss' , toLoad)
-                }
-                */
-            }
+            }else{
+				nextTick(hardDefine)
+			}
             return
         }
-
+		delete depTree[modOrign]
         var exports = {}
             ,module = {exports : undefined}
 
         var ret = con(function(inMod){ return require(inMod , mod ,ns)}, exports , module) 
-        mods[modNS] = module.exports 
-        if (undefined === module.exports) mods[modNS] =  exports || ret
+        if (undefined === module.exports) {
+			mods[modNS] =  util.extend(mods[modNS] ,  exports) || ret
+			//mods[modNS] =  exports || ret
+		}else{
+        	mods[modNS] = util.extend(mods[modNS] , module.exports)
+		}
         modDefining[modNS] = DEFINESTAT.DEFINED 
 
         emitter.emit(modNS + ':defined')
@@ -310,7 +368,7 @@
 		} else {
 			var mods_combine = bootOpt.combine ?bootOpt.combine(mods) : mods.join('+') + '.js'
 			if (!mods_combine) return
-			loadJS(serverHost + mods_combine +  version,{'onErr' : onErr}) 
+			loadJS(serverHost + mods_combine +  version,{'onErr' : onErr})
 		}
     }
 
@@ -370,7 +428,8 @@
 
 					//缓存开始时间
 					var ERA = 1493740800000
-						,RECYCLE_TTL = 3000 //3秒后执行清理
+						,RECYCLE_TTL = 4000 //4秒后执行清理
+						,STORE_TTL = 2000 //2秒后再写入缓存
 					function getStoredKey(k){
 						return LOCALKEY + getModKey(k)
 					}
@@ -449,7 +508,7 @@
 					var tryUpActiveStamp = util.throttle(function(){
 						if (!should_update_stamp) return
 						setItem(LOCAL_MODS_ACTIVE_KEY, mods_active.join(','))
-					})
+					},500)
 					function updateModActiveTime(mode , ttl){
 						mods_active[getModKey(m)] = ttl
 						should_update_stamp = true
@@ -472,7 +531,7 @@
 
 								depencies = depencies ? unzip(depencies.split(',')) : []
 								try{
-									define(m , depencies ,new Function("return " + fn)() ,{'fromLocal' : true})
+									define(m , depencies ,new Function("return function (require ,exports ,module){" + fn + "}")() ,{'fromLocal' : true})
 									updateModActiveTime(m ,getCacheStamp())
 								}catch(err){
 									//依赖列表错误时这里会报错
@@ -489,11 +548,17 @@
 
 						new_mods.push(m)
 
+						var _store_delay_i = 0 
 						emitter.on(m + ':tocache',function(store_key ,lastest_version){
 							return function(fn , depencies){
 								if (!lastest_version || !store_key) return
-								var _cache = [lastest_version , zip(depencies).join(',') ,  fn.toString()].join(';')
-								setItem(store_key , _cache)
+								window.setTimeout(function(){
+									var fn_str = fn.toString()
+									fn_str = fn_str.slice(fn_str.indexOf('{') + 1 , -1).trim()
+									//function (require ,exports ,module){
+									var _cache = [lastest_version , zip(depencies).join(',') ,  fn_str].join(';')
+									setItem(store_key , _cache)
+								}, STORE_TTL + (_store_delay_i++) * 10)
 							}
 						}(store_key,lastest_version))
 					}
