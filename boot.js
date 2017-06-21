@@ -433,7 +433,7 @@
 					//缓存开始时间
 					var ERA = 1493740800000
 						,RECYCLE_TTL = 4000 //4秒后执行清理
-						,STORE_TTL = 2000 //2秒后再写入缓存
+						,STORE_TTL = 1500 //1.5秒后再写入缓存
 					function getStoredKey(k){
 						return LOCALKEY + getModKey(k)
 					}
@@ -535,7 +535,8 @@
 
 								depencies = depencies ? unzip(depencies.split(',')) : []
 								try{
-									define(m , depencies ,new Function("return function (require ,exports ,module){" + fn + "}")() ,{'fromLocal' : true})
+									///define(m , depencies ,new Function("return function (require ,exports ,module){" + fn + "}")() ,{'fromLocal' : true})
+									define(m , depencies ,new Function("return " + fn + "")() ,{'fromLocal' : true})
 									updateModActiveTime(m ,getCacheStamp())
 								}catch(err){
 									//依赖列表错误时这里会报错
@@ -558,11 +559,10 @@
 								if (!lastest_version || !store_key) return
 								window.setTimeout(function(){
 									var fn_str = fn.toString()
-									fn_str = fn_str.slice(fn_str.indexOf('{') + 1 , -1).trim()
-									//function (require ,exports ,module){
+									///fn_str = fn_str.slice(fn_str.indexOf('{') + 1 , -1).trim()
 									var _cache = [lastest_version , zip(depencies).join(',') ,  fn_str].join(';')
 									setItem(store_key , _cache)
-								}, STORE_TTL + (_store_delay_i++) * 10)
+								}, STORE_TTL + (_store_delay_i++) * 5)
 							}
 						}(store_key,lastest_version))
 					}
