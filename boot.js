@@ -87,6 +87,7 @@
         opt = opt || {}
         var l = document.createElement('script')
         l.type = 'text/javascript'
+		l.charset = "UTF-8" 
         l.src =  src
         if (opt.onErr) l.onerror = opt.onErr 
         if (opt.onLoad) l.onload = opt.onLoad 
@@ -99,6 +100,7 @@
         l.setAttribute('rel','stylesheet')
         l.setAttribute('href',css)
         head.appendChild(l)
+		return l
     }
 
 })(this)
@@ -330,7 +332,6 @@
         modDefining[modNS] = DEFINESTAT.DEFINED 
 
         emitter.emit(modNS + ':defined')
-		!opt.fromLocal && emitter.emit(modOrign+ ':tocache' , con , depencies)
 		
     }
 
@@ -385,11 +386,10 @@
             if (!opt) return  bootOpt
             if (undefined !== optval) {
 				bootOpt[opt] = optval 
-			}else{
+			}else if (util.detectType(opt,'Object')){
 				for (var k in opt) bootOpt[k] = opt[k]
-			}
-			if (bootOpt.localCache && !STORAGE){
-				bootOpt.localCache = false
+			}else{
+				return bootOpt[opt]
 			}
             return this
         } 
@@ -415,181 +415,9 @@
 
     ~function(){
         var async_mod = []
-            ,async_timer
-
-
+			,async_css = []
 
         global.booter.asyncLoad = function(mod , cbk){
-			var new_mods
-			if (bootOpt.localCache && bootOpt.modsNVersion){
-				//bootOpt.modVersions 里的都需要使用，先跟本地比对然后重写列表	
-				//长期不用的缓存理掉
-				//缓存格式 md5;依赖列表 逗号分割;脚本内容
-				~function(){
-					var LOCALKEY = '_cjs_'
-						,LOCAL_MODS_ACTIVE_KEY = '_cjs_a_'
-						,LOCAL_MODS_KEY = '_cjs_lt_'
-
-					//缓存开始时间
-					var ERA = 1493740800000
-						,RECYCLE_TTL = 4000 //4秒后执行清理
-						,STORE_TTL = 1500 //1.5秒后再写入缓存
-					function getStoredKey(k){
-						return LOCALKEY + getModKey(k)
-					}
-					
-					new_mods = []
-
-
-					var all_mods = getItem(LOCAL_MODS_KEY)
-						,should_update_list = false
-
-					all_mods = all_mods? all_mods.split(',') : []
-
-					var mods_active = getItem(LOCAL_MODS_ACTIVE_KEY)
-						,should_update_stamp = false
-					mods_active = mods_active? mods_active.split(',') :[]
-				
-
-					function  StrGen(con,splitor){
-						var splitor_len = splitor.length
-						return {
-							'next' : function(){
-								var index = con.indexOf(splitor)
-								if (index > -1){
-									var ret = con.slice(0,index)
-									con = con.slice(index + splitor_len)
-									return ret
-								}
-							}
-							,'return': function(){
-								return con
-							}
-						}
-					}
-
-					function getModKey(m){
-						var index  = all_mods.indexOf(m)
-						if (index === -1) {
-							should_update_list = true
-							index = all_mods.push(m) - 1
-							tryUpModList()
-						}
-						return index
-					}
-					function getKeyMod(index){
-						return all_mods[index] 
-					
-					}
-
-					function unzip(depencies){
-						return depencies.map(getKeyMod)
-					} 
-					function zip(depencies){
-						return depencies.map(getModKey)
-					}
-					function setItem(key,val){
-						try{
-							if (bootOpt.localCache.decompress) val = bootOpt.localCache.compress(val)
-							STORAGE.setItem(key , val)
-						}catch(err){
-							console.log('update js list error ' ,error)
-						}
-					}
-					function getItem(key){
-						var val = STORAGE.getItem(key)
-						if (bootOpt.localCache.decompress) val = bootOpt.localCache.decompress(val)
-						return val
-					}
-					function getCacheStamp(){
-						//过去的分钟数
-						return (new Date - ERA)/1000/60|0
-					}
-					var tryUpModList = util.throttle(function(){
-						if (!should_update_list) return
-						setItem(LOCAL_MODS_KEY, all_mods.join(','))
-					})
-					var tryUpActiveStamp = util.throttle(function(){
-						if (!should_update_stamp) return
-						setItem(LOCAL_MODS_ACTIVE_KEY, mods_active.join(','))
-					},500)
-					function updateModActiveTime(mode , ttl){
-						mods_active[getModKey(m)] = ttl
-						should_update_stamp = true
-						tryUpActiveStamp()
-					}
-
-					for(var  m in bootOpt.modsNVersion){
-						var lastest_version = bootOpt.modsNVersion[m]
-						//模块不存在时 lastest_version 为空 不缓存
-						var store_key = getStoredKey(m)
-						var _cached = getItem(store_key)
-						if (_cached){
-
-							var local_version = _cached.slice(0,32)
-							if (local_version === lastest_version){
-								_cached = StrGen(_cached.slice(33) ,';')
-
-								var depencies = _cached.next()
-									,fn = _cached.return() 
-
-								depencies = depencies ? unzip(depencies.split(',')) : []
-								try{
-									///define(m , depencies ,new Function("return function (require ,exports ,module){" + fn + "}")() ,{'fromLocal' : true})
-									define(m , depencies ,new Function("return " + fn + "")() ,{'fromLocal' : true})
-									updateModActiveTime(m ,getCacheStamp())
-								}catch(err){
-									//依赖列表错误时这里会报错
-									console.log(err)
-									//删除缓存并异步拉取
-									localStorage.removeItem(store_key)
-									booter.asyncLoad(m)
-								}
-
-								continue
-							}
-						}
-
-
-						new_mods.push(m)
-
-						var _store_delay_i = 0 
-						emitter.on(m + ':tocache',function(store_key ,lastest_version){
-							return function(fn , depencies){
-								if (!lastest_version || !store_key) return
-								window.setTimeout(function(){
-									var fn_str = fn.toString()
-									///fn_str = fn_str.slice(fn_str.indexOf('{') + 1 , -1).trim()
-									var _cache = [lastest_version , zip(depencies).join(',') ,  fn_str].join(';')
-									setItem(store_key , _cache)
-								}, STORE_TTL + (_store_delay_i++) * 5)
-							}
-						}(store_key,lastest_version))
-					}
-					
-					//删除长期未激活的缓存
-					//单位分钟
-					function removeUnActives(expires){
-						var now = getCacheStamp() 
-						mods_active.forEach(function(active_time,i){
-							active_time = active_time | 0
-							if (active_time + expires >= now) return
-							var mod = getKeyMod(i)
-								,store_key = getStoredKey(mod)
-							localStorage.removeItem(store_key)
-							updateModActiveTime(mod ,0)
-						})
-					}
-
-					if (bootOpt.localCache.expires && mods_active){
-						setTimeout(function(){
-							removeUnActives(bootOpt.localCache.expires)
-						},RECYCLE_TTL)
-					}		
-				}()
-				
-				
-			}
             function onLoad(){
                 var inst 
                 if (is_multi){
@@ -605,33 +433,31 @@
 
             var is_multi = global.util.isArray(mod)
             if (!is_multi) mod = [mod]     
-            var need_load = []
-            mod.forEach(function(m){
-                if (!isModLoaded(m)) need_load.push(m)
-            })
-            if (0 === need_load.length) {
-                return onLoad()
-            } else {
-                mod = need_load
-            }
-
+			var need_load = []
+			mod.forEach(function(m){
+				if (!isModLoaded(m)) need_load.push(m)
+			})
+			if (0 === need_load.length) {
+				return onLoad()
+			}
             if (cbk) emitter.on(appendFix(mod , ':defined') , onLoad)
 
-            ;(new_mods || mod).forEach(function(m){
-                if (async_mod.indexOf(m) === -1) async_mod.push(m)
+            need_load.forEach(function(m){
+				if (async_mod.indexOf(m) === -1) async_mod.push(m)
             })
 
-            //开发模式js加载器加载 ， 生产模式服务器打包加载
-			asyncLoading = async_mod
-			if (!async_mod.length) return
-            async_timer && global.clearTimeout(async_timer)
-			async_timer = global.setTimeout(function(){
+            //开发模式js加载器加载 ， 生产模式服务器打包加载	
+			var asyncJSFn = util.throttle(function(){
 				loadMod(async_mod ,{'onLoad' : function(){
 					//加载完了 可以开启hardDefine
 					if (false === bootOpt.enableHardDefine) return
 					bootOpt.enableHardDefine = true
-				}})
-			} , 0)
+
+					async_mod = []
+					async_css = []
+				},'Version' : bootOpt.Version})
+			} )
+			if (async_mod.length) asyncJSFn() 
             return this
         }
     }()
